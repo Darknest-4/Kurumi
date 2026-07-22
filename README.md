@@ -271,8 +271,12 @@ maintenance and get `/dev`:
 - **Developer** — global XP ops, maintenance mode, blacklist
 - **Logging** — per-category audit logging to channels
 
+- **Web dashboard** (`dashboard/`) — a Next.js 14 app (dark, anime-themed,
+  responsive) on the **same** Postgres/Prisma: login, server switcher, overview
+  stats, module toggles, **a page per module** with a live config editor,
+  permission management and a log viewer. See `dashboard/README.md`.
+
 Plus the full database schema, initial migration and anime content seed.
 
-**Planned:** the web dashboard — a separate Next.js app (dark, anime-themed,
-responsive) talking to the same Postgres/Prisma models and `GuildConfig`, so it
-needs no bot-side API. See `docs/ARCHITECTURE.md` for the design.
+Everything above is verified: `tsc`, `next build`, a local integration boot
+test against real Postgres + Redis, and dashboard page rendering all pass.
