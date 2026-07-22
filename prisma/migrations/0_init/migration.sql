@@ -520,6 +520,33 @@ CREATE TABLE "blacklists" (
 );
 
 -- CreateTable
+CREATE TABLE "giveaways" (
+    "id" TEXT NOT NULL,
+    "guildId" TEXT NOT NULL,
+    "channelId" TEXT NOT NULL,
+    "messageId" TEXT,
+    "prize" TEXT NOT NULL,
+    "winners" INTEGER NOT NULL DEFAULT 1,
+    "entryCost" BIGINT NOT NULL DEFAULT 0,
+    "state" "EventState" NOT NULL DEFAULT 'ACTIVE',
+    "createdBy" TEXT NOT NULL,
+    "endsAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "giveaways_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "giveaway_entries" (
+    "id" TEXT NOT NULL,
+    "giveawayId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "joinedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "giveaway_entries_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "global_state" (
     "id" INTEGER NOT NULL DEFAULT 1,
     "maintenance" BOOLEAN NOT NULL DEFAULT false,
@@ -680,6 +707,12 @@ CREATE UNIQUE INDEX "developers_userId_key" ON "developers"("userId");
 -- CreateIndex
 CREATE UNIQUE INDEX "blacklists_userId_key" ON "blacklists"("userId");
 
+-- CreateIndex
+CREATE INDEX "giveaways_guildId_state_idx" ON "giveaways"("guildId", "state");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "giveaway_entries_giveawayId_userId_key" ON "giveaway_entries"("giveawayId", "userId");
+
 -- AddForeignKey
 ALTER TABLE "guild_configs" ADD CONSTRAINT "guild_configs_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "guilds"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -787,4 +820,10 @@ ALTER TABLE "developers" ADD CONSTRAINT "developers_userId_fkey" FOREIGN KEY ("u
 
 -- AddForeignKey
 ALTER TABLE "blacklists" ADD CONSTRAINT "blacklists_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "giveaways" ADD CONSTRAINT "giveaways_guildId_fkey" FOREIGN KEY ("guildId") REFERENCES "guilds"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "giveaway_entries" ADD CONSTRAINT "giveaway_entries_giveawayId_fkey" FOREIGN KEY ("giveawayId") REFERENCES "giveaways"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

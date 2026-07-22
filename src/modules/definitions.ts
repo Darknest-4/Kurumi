@@ -144,7 +144,15 @@ export const MODULE_DEFINITIONS: ModuleDefinition[] = [
     description: 'Large-scale multi-phase boss raids with shields & special attacks.',
     defaultEnabled: true,
     permissions: ['raid.start', 'raid.attack'],
-    defaultConfig: { baseHp: 1_000_000, phases: 3, 'attack.baseDamage': 250 },
+    defaultConfig: {
+      baseHp: 1_000_000,
+      phases: 3,
+      'attack.baseDamage': 250,
+      'attack.cooldown': 5,
+      'special.cooldown': 60,
+      'special.multiplier': 4,
+      'shield.factor': 0.2,
+    },
   }),
   defineModule({
     key: 'clan',

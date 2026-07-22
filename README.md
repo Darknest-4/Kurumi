@@ -246,16 +246,33 @@ maintenance and get `/dev`:
 
 ## 🗺️ Status & roadmap
 
-**Implemented end-to-end:** core framework (dynamic loaders, config,
-permissions, module toggles, cooldowns), XP/level engine, economy
-(work/daily/pay/balance/gamble), profile, rank, leaderboard, the Vault event
-(command + button + reaction + restart resume), developer console, structured
-logging, full database schema and content seed.
+**Implemented end-to-end (28 slash commands, 9 components, event resume):**
 
-**Scaffolded (schema, config defaults, permission nodes, module toggle ready)
-and built to extend with the documented pattern:** shop, pets, gacha, boss,
-bomb, raid, clan, quiz, moderation, reaction roles, tickets, giveaway, welcome,
-and the web dashboard (planned as a separate Next.js app talking to the same
-Postgres/Prisma models and `GuildConfig`).
+- **Core** — ping, help, module toggle, config editor, permission assignment
+- **Leveling** — message XP + level-up, `/rank`
+- **Economy** — work, daily, pay, balance, gamble (all XP)
+- **Profile / Leaderboard** — anime profile card, XP/level/message boards
+- **Shop** — `/shop view|buy|seed|toggle`, XP purchases apply real effects
+  (titles, colors, boosts, pet eggs, consumables)
+- **Pets** — list & equip; pet eggs hatch weighted-random species
+- **Gacha** — `/gacha roll|collection|equip`, rarity-weighted summons w/ passives
+- **Boss** — `/boss` spawn + Attack button, HP bar, damage-weighted XP drops,
+  slayer badge to top damager
+- **Vault** — raffle: command + join button + 💰 reaction + restart resume
+- **Bomb** — lobby → tick elimination → last survivor wins the pool (resumable)
+- **Raid** — multi-phase boss w/ shield, normal & special attacks, damage board
+- **Clan** — create/join/leave/info/deposit/list, clan XP, level & shared vault
+- **Anime Quiz** — `/quiz` with first-correct-answer message collector
+- **Moderation** — warn/kick/ban/timeout + numbered cases + mass-mention AutoMod
+- **Welcome** — configurable join messages with placeholders
+- **Reaction Roles** — button role panels (self-assign, hierarchy-safe)
+- **Tickets** — panel → private channel → close
+- **Giveaway** — timed draws with optional XP entry, resumable
+- **Developer** — global XP ops, maintenance mode, blacklist
+- **Logging** — per-category audit logging to channels
 
-See `docs/ARCHITECTURE.md` for deeper design notes.
+Plus the full database schema, initial migration and anime content seed.
+
+**Planned:** the web dashboard — a separate Next.js app (dark, anime-themed,
+responsive) talking to the same Postgres/Prisma models and `GuildConfig`, so it
+needs no bot-side API. See `docs/ARCHITECTURE.md` for the design.
