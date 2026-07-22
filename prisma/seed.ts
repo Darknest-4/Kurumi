@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { PrismaClient, Rarity, QuizType } from '@prisma/client';
 
 const prisma = new PrismaClient();

@@ -87,6 +87,24 @@ export class KurumiClient extends Client {
 
   // ── Global state helpers (Redis-cached, DB-backed) ──────────────
 
+  /** In-memory memo so we upsert each guild row at most once per process. */
+  private readonly ensuredGuilds = new Set<string>();
+
+  /**
+   * Guarantee a guild row exists before any guild-scoped write. Cheap and
+   * idempotent — covers guilds joined while the bot was offline (no
+   * guildCreate event) so config/module/permission writes never FK-fail.
+   */
+  async ensureGuild(guildId: string, name?: string): Promise<void> {
+    if (this.ensuredGuilds.has(guildId)) return;
+    await prisma.guild.upsert({
+      where: { id: guildId },
+      create: { id: guildId, name },
+      update: name ? { name } : {},
+    });
+    this.ensuredGuilds.add(guildId);
+  }
+
   async isBlacklisted(userId: string): Promise<boolean> {
     const key = `bl:${userId}`;
     try {

@@ -17,7 +17,9 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
-  SHARD_COUNT: z.string().optional().default('auto'),
+  // NOTE: do NOT add a SHARD_COUNT var — discord.js reserves the
+  // `SHARD_COUNT` / `SHARDS` / `SHARDING_MANAGER` env names for its own
+  // ShardingManager, and setting them here breaks `new Client()`.
 
   BOOTSTRAP_OWNER_IDS: z
     .string()

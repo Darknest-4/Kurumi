@@ -41,6 +41,7 @@ export class ComponentManager {
     if (!handler) return;
 
     try {
+      if (interaction.inGuild()) await this.client.ensureGuild(interaction.guildId);
       if (handler.module && interaction.inGuild()) {
         const enabled = await this.client.modules.isEnabled(interaction.guildId, handler.module);
         if (!enabled) return;

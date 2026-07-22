@@ -89,6 +89,7 @@ export class CommandManager {
         return void this.reject(interaction, 'This command can only be used in a server.');
       }
       const guildId = interaction.guildId!;
+      if (guildId) await this.client.ensureGuild(guildId, interaction.guild?.name ?? undefined);
 
       // 3. Developer-only.
       if (command.developerOnly && !(await this.client.permissions.isDeveloper(interaction.user.id))) {
