@@ -1,0 +1,776 @@
+// ─────────────────────────────────────────────────────────────
+// Kurumi — Prisma schema
+//
+// Design rules:
+//  * NOTHING gameplay-related is hardcoded. Every tunable value lives
+//    here in the DB and is editable per-guild at runtime.
+//  * `GuildConfig` is a generic namespaced key/value store so ANY new
+//    setting can be added without a migration (colors, emojis, rates…).
+//  * Structured content (pets, gacha chars, bosses, shop items, badges…)
+//    are DB rows too — the code ships zero content, the seed populates it.
+//  * Everything is guild-scoped where it makes sense so the bot runs on
+//    thousands of servers with fully independent configuration.
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GUILD / CONFIG / MODULES
+// ══════════════════════════════════════════════════════════════
+
+model Guild {
+  id        String   @id // Discord guild id (snowflake)
+  name      String?
+  locale    String   @default("en")
+  premium   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  configs        GuildConfig[]
+  modules        GuildModule[]
+  members        Member[]
+  permissions    PermissionAssignment[]
+  clans          Clan[]
+  shopItems      ShopItem[]
+  logChannels    LogChannel[]
+  moderationCase ModerationCase[]
+  vaultEvents    VaultEvent[]
+  bombEvents     BombEvent[]
+  bossInstances  BossInstance[]
+  raidInstances  RaidInstance[]
+
+  @@map("guilds")
+}
+
+/// Generic per-guild key/value config. `namespace` groups a module
+/// (e.g. "economy", "vault", "embed", "emoji"), `key` is the setting.
+/// `value` is JSON so it can hold numbers, strings, arrays or objects.
+model GuildConfig {
+  id        String   @id @default(cuid())
+  guildId   String
+  namespace String
+  key       String
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, namespace, key])
+  @@index([guildId, namespace])
+  @@map("guild_configs")
+}
+
+/// Per-guild enable/disable switch for every module.
+model GuildModule {
+  id       String  @id @default(cuid())
+  guildId  String
+  module   String // "economy", "boss", "vault", "bomb", "pets", "clan"...
+  enabled  Boolean @default(true)
+  settings Json? // optional module-scoped structured settings
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, module])
+  @@index([guildId])
+  @@map("guild_modules")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  PERMISSIONS
+// ══════════════════════════════════════════════════════════════
+
+enum PermissionTargetType {
+  ROLE
+  USER
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+/// A permission node (e.g. "economy.work") assigned to a role or user.
+/// DENY overrides ALLOW. Nodes support wildcards ("economy.*", "*").
+model PermissionAssignment {
+  id         String               @id @default(cuid())
+  guildId    String
+  node       String // permission node or wildcard
+  targetType PermissionTargetType
+  targetId   String // role id or user id
+  effect     PermissionEffect     @default(ALLOW)
+  createdAt  DateTime             @default(now())
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, node, targetType, targetId])
+  @@index([guildId, targetId])
+  @@map("permission_assignments")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  USERS / MEMBERS / XP (the only currency)
+// ══════════════════════════════════════════════════════════════
+
+/// Global (cross-guild) user identity + global-only cosmetics.
+model User {
+  id        String   @id // Discord user id
+  username  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members    Member[]
+  developer  Developer?
+  blacklist  Blacklist?
+
+  @@map("users")
+}
+
+/// A user within a specific guild. XP & progression are per-guild.
+model Member {
+  id       String @id @default(cuid())
+  guildId  String
+  userId   String
+
+  xp        BigInt   @default(0) // lifetime XP earned (the currency balance)
+  totalXp   BigInt   @default(0) // lifetime XP ever earned (never spent) — for level
+  level     Int      @default(0)
+  messages  BigInt   @default(0)
+  voiceSecs BigInt   @default(0)
+
+  // equipped cosmetics (references resolved at runtime)
+  activeTitleId  String?
+  activeBadgeId  String?
+  activePetId    String?
+  activeWaifuId  String? // equipped gacha character
+  bannerUrl      String?
+  color          String? // hex, overrides guild default embed color on profile
+  bio            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  guild        Guild               @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pets         UserPet[]
+  characters   UserCharacter[]
+  inventory    InventoryItem[]
+  badges       UserBadge[]
+  titles       UserTitle[]
+  achievements UserAchievement[]
+  cooldowns    Cooldown[]
+  clanMember   ClanMember?
+  boosts       XpBoost[]
+
+  @@unique([guildId, userId])
+  @@index([guildId, xp])
+  @@index([guildId, level])
+  @@map("members")
+}
+
+/// Durable cooldowns (short-lived ones also mirrored in Redis).
+model Cooldown {
+  id        String   @id @default(cuid())
+  memberId  String
+  key       String // e.g. "economy.daily", "economy.work"
+  expiresAt DateTime
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, key])
+  @@index([expiresAt])
+  @@map("cooldowns")
+}
+
+/// Temporary XP multiplier bought/earned (shop boost, event boost).
+model XpBoost {
+  id         String   @id @default(cuid())
+  memberId   String
+  multiplier Float    @default(1.0)
+  source     String
+  expiresAt  DateTime
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, expiresAt])
+  @@map("xp_boosts")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  CONTENT CATALOGS (all editable rows, no hardcoded content)
+// ══════════════════════════════════════════════════════════════
+
+enum Rarity {
+  COMMON
+  RARE
+  EPIC
+  LEGENDARY
+  MYTHIC
+  DIVINE
+}
+
+/// Pet species catalog (Kurama, Pochita, Happy…). Guild-agnostic base
+/// content; each guild can still gate availability via config.
+model PetSpecies {
+  id        String  @id @default(cuid())
+  key       String  @unique // "kurama"
+  name      String
+  emoji     String?
+  imageUrl  String?
+  rarity    Rarity  @default(COMMON)
+  stats     Json // { xpBonusPct, luck, ... } — arbitrary, DB-driven
+  passive   String?
+  enabled   Boolean @default(true)
+
+  userPets UserPet[]
+
+  @@map("pet_species")
+}
+
+model UserPet {
+  id        String   @id @default(cuid())
+  memberId  String
+  speciesId String
+  nickname  String?
+  level     Int      @default(1)
+  xp        BigInt   @default(0)
+  acquiredAt DateTime @default(now())
+
+  member  Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  species PetSpecies @relation(fields: [speciesId], references: [id])
+
+  @@index([memberId])
+  @@map("user_pets")
+}
+
+/// Gacha / summon character catalog. Each has a passive ability.
+model GachaCharacter {
+  id       String  @id @default(cuid())
+  key      String  @unique
+  name     String
+  anime    String?
+  emoji    String?
+  imageUrl String?
+  rarity   Rarity  @default(COMMON)
+  passive  String? // description of passive ability
+  effects  Json? // machine-readable passive effect payload
+  enabled  Boolean @default(true)
+
+  owners UserCharacter[]
+
+  @@map("gacha_characters")
+}
+
+model UserCharacter {
+  id          String   @id @default(cuid())
+  memberId    String
+  characterId String
+  copies      Int      @default(1) // dupes -> shards / limit break
+  level       Int      @default(1)
+  acquiredAt  DateTime @default(now())
+
+  member    Member         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  character GachaCharacter @relation(fields: [characterId], references: [id])
+
+  @@unique([memberId, characterId])
+  @@index([memberId])
+  @@map("user_characters")
+}
+
+/// Boss catalog (Madara, Aizen, Sukuna…). HP and drops are DB-driven.
+model Boss {
+  id       String  @id @default(cuid())
+  key      String  @unique
+  name     String
+  anime    String?
+  emoji    String?
+  imageUrl String?
+  baseHp   BigInt  @default(10000)
+  attack   Int     @default(100)
+  drops    Json // { xp, badgeKeys[], titleKeys[], petKeys[], lootboxKeys[], rates }
+  enabled  Boolean @default(true)
+
+  instances BossInstance[]
+
+  @@map("bosses")
+}
+
+model Badge {
+  id       String  @id @default(cuid())
+  key      String  @unique
+  name     String
+  emoji    String?
+  imageUrl String?
+  rarity   Rarity  @default(COMMON)
+  hidden   Boolean @default(false)
+
+  owners UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  memberId  String
+  badgeId   String
+  grantedAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  badge  Badge  @relation(fields: [badgeId], references: [id])
+
+  @@unique([memberId, badgeId])
+  @@map("user_badges")
+}
+
+model Title {
+  id     String @id @default(cuid())
+  key    String @unique
+  text   String
+  color  String?
+
+  owners UserTitle[]
+
+  @@map("titles")
+}
+
+model UserTitle {
+  id        String   @id @default(cuid())
+  memberId  String
+  titleId   String
+  grantedAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  title  Title  @relation(fields: [titleId], references: [id])
+
+  @@unique([memberId, titleId])
+  @@map("user_titles")
+}
+
+/// Achievement catalog + progress. Conditions are DB-driven JSON.
+model Achievement {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  name        String
+  description String?
+  emoji       String?
+  condition   Json // { type: "xp"|"messages"|"bossKills"..., threshold }
+  rewardXp    BigInt  @default(0)
+  hidden      Boolean @default(false)
+
+  progress UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String    @id @default(cuid())
+  memberId      String
+  achievementId String
+  progress      BigInt    @default(0)
+  completedAt   DateTime?
+
+  member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([memberId, achievementId])
+  @@map("user_achievements")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SHOP / INVENTORY  (priced in XP — the only currency)
+// ══════════════════════════════════════════════════════════════
+
+enum ShopItemType {
+  TITLE
+  COLOR
+  BANNER
+  AVATAR_FRAME
+  XP_BOOST
+  PET_EGG
+  VAULT_TICKET
+  BOMB_SHIELD
+  LOOTBOX
+  BADGE
+  CUSTOM
+}
+
+/// Shop is per-guild so prices/availability differ per server.
+model ShopItem {
+  id        String       @id @default(cuid())
+  guildId   String
+  key       String
+  name      String
+  type      ShopItemType
+  price     BigInt // XP cost
+  payload   Json? // type-specific data (boost mult/duration, frame url, lootbox table)
+  stock     Int? // null = unlimited
+  enabled   Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, key])
+  @@index([guildId, enabled])
+  @@map("shop_items")
+}
+
+/// Generic owned item stack (consumables like tickets, shields, boxes).
+model InventoryItem {
+  id        String   @id @default(cuid())
+  memberId  String
+  itemKey   String
+  itemType  ShopItemType
+  quantity  Int      @default(1)
+  payload   Json?
+  updatedAt DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, itemKey])
+  @@index([memberId])
+  @@map("inventory_items")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  EVENTS: VAULT / BOMB / BOSS / RAID
+// ══════════════════════════════════════════════════════════════
+
+enum EventState {
+  PENDING
+  ACTIVE
+  RESOLVING
+  FINISHED
+  CANCELLED
+}
+
+model VaultEvent {
+  id         String     @id @default(cuid())
+  guildId    String
+  channelId  String
+  messageId  String?
+  entryCost  BigInt // XP entry fee (snapshotted from config at spawn)
+  prizePool  BigInt     @default(0)
+  state      EventState @default(PENDING)
+  winnerId   String?
+  startedAt  DateTime   @default(now())
+  endsAt     DateTime?
+  finishedAt DateTime?
+
+  guild        Guild             @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  participants VaultParticipant[]
+
+  @@index([guildId, state])
+  @@map("vault_events")
+}
+
+model VaultParticipant {
+  id       String   @id @default(cuid())
+  vaultId  String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  vault VaultEvent @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@unique([vaultId, userId])
+  @@map("vault_participants")
+}
+
+model BombEvent {
+  id            String     @id @default(cuid())
+  guildId       String
+  channelId     String
+  messageId     String?
+  entryCost     BigInt
+  prizePool     BigInt     @default(0)
+  tickSeconds   Int        @default(15) // snapshot from config
+  state         EventState @default(PENDING)
+  survivorId    String?
+  startedAt     DateTime   @default(now())
+  finishedAt    DateTime?
+
+  guild        Guild            @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  participants BombParticipant[]
+
+  @@index([guildId, state])
+  @@map("bomb_events")
+}
+
+model BombParticipant {
+  id           String    @id @default(cuid())
+  bombId       String
+  userId       String
+  eliminatedAt DateTime?
+  placement    Int? // 1 = survivor
+
+  bomb BombEvent @relation(fields: [bombId], references: [id], onDelete: Cascade)
+
+  @@unique([bombId, userId])
+  @@map("bomb_participants")
+}
+
+model BossInstance {
+  id         String     @id @default(cuid())
+  guildId    String
+  bossId     String
+  channelId  String
+  messageId  String?
+  maxHp      BigInt
+  currentHp  BigInt
+  state      EventState @default(ACTIVE)
+  spawnedAt  DateTime   @default(now())
+  defeatedAt DateTime?
+
+  guild       Guild              @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  boss        Boss               @relation(fields: [bossId], references: [id])
+  contributors BossContribution[]
+
+  @@index([guildId, state])
+  @@map("boss_instances")
+}
+
+model BossContribution {
+  id        String @id @default(cuid())
+  instanceId String
+  userId    String
+  damage    BigInt @default(0)
+
+  instance BossInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([instanceId, userId])
+  @@index([instanceId, damage])
+  @@map("boss_contributions")
+}
+
+model RaidInstance {
+  id         String     @id @default(cuid())
+  guildId    String
+  bossKey    String
+  channelId  String
+  messageId  String?
+  maxHp      BigInt
+  currentHp  BigInt
+  phase      Int        @default(1)
+  shield     BigInt     @default(0)
+  state      EventState @default(ACTIVE)
+  spawnedAt  DateTime   @default(now())
+  finishedAt DateTime?
+
+  guild        Guild            @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  participants RaidParticipant[]
+
+  @@index([guildId, state])
+  @@map("raid_instances")
+}
+
+model RaidParticipant {
+  id        String @id @default(cuid())
+  raidId    String
+  userId    String
+  damage    BigInt @default(0)
+
+  raid RaidInstance @relation(fields: [raidId], references: [id], onDelete: Cascade)
+
+  @@unique([raidId, userId])
+  @@index([raidId, damage])
+  @@map("raid_participants")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  CLANS
+// ══════════════════════════════════════════════════════════════
+
+enum ClanRole {
+  LEADER
+  OFFICER
+  MEMBER
+}
+
+model Clan {
+  id        String   @id @default(cuid())
+  guildId   String
+  name      String
+  tag       String
+  emoji     String?
+  level     Int      @default(1)
+  xp        BigInt   @default(0) // clan XP
+  vault     BigInt   @default(0) // shared clan XP bank
+  createdAt DateTime @default(now())
+
+  guild   Guild        @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  members ClanMember[]
+  quests  ClanQuest[]
+
+  @@unique([guildId, tag])
+  @@index([guildId, xp])
+  @@map("clans")
+}
+
+model ClanMember {
+  id        String   @id @default(cuid())
+  clanId    String
+  memberId  String   @unique
+  role      ClanRole @default(MEMBER)
+  contributed BigInt @default(0)
+  joinedAt  DateTime @default(now())
+
+  clan   Clan   @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([clanId])
+  @@map("clan_members")
+}
+
+model ClanQuest {
+  id          String    @id @default(cuid())
+  clanId      String
+  key         String
+  progress    BigInt    @default(0)
+  target      BigInt
+  rewardXp    BigInt    @default(0)
+  completedAt DateTime?
+  expiresAt   DateTime?
+
+  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
+
+  @@index([clanId])
+  @@map("clan_quests")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ANIME QUIZ
+// ══════════════════════════════════════════════════════════════
+
+enum QuizType {
+  CHARACTER
+  OPENING
+  VOICE
+  ANIME
+  MANGA
+  LOGO
+  STUDIO
+}
+
+model QuizQuestion {
+  id        String   @id @default(cuid())
+  type      QuizType
+  prompt    String // text or media url
+  mediaUrl  String?
+  answer    String
+  aliases   String[] // accepted alternative answers
+  rarity    Rarity   @default(COMMON)
+  enabled   Boolean  @default(true)
+
+  @@index([type, enabled])
+  @@map("quiz_questions")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MODERATION
+// ══════════════════════════════════════════════════════════════
+
+enum ModerationAction {
+  WARN
+  MUTE
+  KICK
+  BAN
+  TEMPBAN
+  TIMEOUT
+  UNBAN
+  UNMUTE
+}
+
+model ModerationCase {
+  id        String           @id @default(cuid())
+  guildId   String
+  caseNo    Int
+  userId    String
+  moderatorId String
+  action    ModerationAction
+  reason    String?
+  expiresAt DateTime? // for tempban/timeout
+  active    Boolean          @default(true)
+  createdAt DateTime         @default(now())
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, caseNo])
+  @@index([guildId, userId])
+  @@map("moderation_cases")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  LOGGING
+// ══════════════════════════════════════════════════════════════
+
+/// Per-guild, per-category log channel routing.
+model LogChannel {
+  id        String @id @default(cuid())
+  guildId   String
+  category  String // "xp","pay","vault","bomb","boss","raid","clan","warn","ban","kick","developer","admin"
+  channelId String
+  enabled   Boolean @default(true)
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, category])
+  @@map("log_channels")
+}
+
+/// Persisted audit log entry (also mirrored to the channel if configured).
+model LogEntry {
+  id        String   @id @default(cuid())
+  guildId   String
+  category  String
+  actorId   String?
+  targetId  String?
+  data      Json
+  createdAt DateTime @default(now())
+
+  @@index([guildId, category, createdAt])
+  @@map("log_entries")
+}
+
+// ══════════════════════════════════════════════════════════════
+//  DEVELOPER / GLOBAL STATE
+// ══════════════════════════════════════════════════════════════
+
+model Developer {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  permissions String[] // extra dev-scoped nodes; empty => full dev access
+  addedBy     String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("developers")
+}
+
+model Blacklist {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  reason    String?
+  addedBy   String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("blacklists")
+}
+
+/// Single-row global runtime state (maintenance mode, announcements).
+model GlobalState {
+  id              Int      @id @default(1)
+  maintenance     Boolean  @default(false)
+  maintenanceNote String?
+  announcement    String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("global_state")
+}

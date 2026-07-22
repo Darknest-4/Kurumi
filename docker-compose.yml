@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kurumi
+      POSTGRES_PASSWORD: kurumi
+      POSTGRES_DB: kurumi
+    ports:
+      - '5432:5432'
+    volumes:
+      - kurumi_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U kurumi']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - kurumi_redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bot:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://kurumi:kurumi@postgres:5432/kurumi?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    env_file:
+      - .env
+
+volumes:
+  kurumi_pgdata:
+  kurumi_redisdata:
